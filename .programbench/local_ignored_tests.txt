@@ -1,0 +1,21 @@
+# Course-side exclusions: tests that are environment-sensitive outside the
+# benchmark containers. Format: <branch>/<classname>.<testname>
+
+# fastText lets std::invalid_argument propagate uncaught for error cases. The C++
+# runtime's terminate handler differs: macOS libc++ prints 'libc++abi: terminating
+# due to uncaught exception of type ...: <msg>' while the Linux libstdc++ goldens
+# print 'terminate called after throwing ...\n  what(): <msg>'. Same error message,
+# different runtime wrapper. Also: avg.loss prints '-nan' on arm64 vs 'nan' on the
+# container, and per-label metric lines iterate labels in a different hash order.
+
+8ebac061b133/eval.tests.test_errors_edge_cases.test_corrupted_binary_model_wrong_format_error
+8ebac061b133/eval.tests.test_errors_edge_cases.test_empty_training_file_throws_empty_vocabulary_error
+8ebac061b133/eval.tests.test_errors_edge_cases.test_epoch_zero_completes_immediately
+8ebac061b133/eval.tests.test_errors_edge_cases.test_fake_model_file_wrong_format_error
+8ebac061b133/eval.tests.test_errors_edge_cases.test_missing_model_file_throws_clear_error
+8ebac061b133/eval.tests.test_errors_edge_cases.test_predict_with_nonexistent_model
+8ebac061b133/eval.tests.test_errors_edge_cases.test_read_only_output_directory_error
+8ebac061b133/eval.tests.test_errors_edge_cases.test_whitespace_only_training_file
+8ebac061b133/eval.tests.test_predict_eval.test_predict_missing_model_file
+8ebac061b133/eval.tests.test_predict_eval.test_test_label_per_label_metrics
+8ebac061b133/eval.tests.test_predict_eval.test_test_missing_model_file
