@@ -28,6 +28,10 @@ class DenseMatrix : public Matrix {
   intgemm::AlignedVector<real> data_;
   void uniformThread(real, int, int32_t);
 
+  inline int64_t rowOffset(int64_t i) const {
+    return i * n_;
+  }
+
  public:
   DenseMatrix();
   explicit DenseMatrix(int64_t, int64_t);
@@ -46,11 +50,11 @@ class DenseMatrix : public Matrix {
   }
 
   inline const real& at(int64_t i, int64_t j) const {
-    assert(i * n_ + j < data_.size());
-    return data_[i * n_ + j];
+    assert(rowOffset(i) + j < data_.size());
+    return data_[rowOffset(i) + j];
   };
   inline real& at(int64_t i, int64_t j) {
-    return data_[i * n_ + j];
+    return data_[rowOffset(i) + j];
   };
 
   inline int64_t rows() const {

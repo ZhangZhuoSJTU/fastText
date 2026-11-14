@@ -8,7 +8,7 @@
 
 CXX = c++
 CXXFLAGS = -pthread -std=c++17 -march=native
-OBJS = args.o autotune.o matrix.o dictionary.o loss.o productquantizer.o densematrix.o quantmatrix.o vector.o model.o utils.o meter.o fasttext.o
+OBJS = args.o autotune.o matrix.o dictionary.o loss.o productquantizer.o densematrix.o quantmatrix.o vector.o model.o utils.o meter.o fasttext.o modelcompat.o encoding.o layout.o
 INCLUDES = -I.
 
 opt: CXXFLAGS += -O3 -funroll-loops -DNDEBUG
@@ -29,13 +29,13 @@ wasmdebug: webassembly/fasttext_wasm.js
 args.o: src/args.cc src/args.h
 	$(CXX) $(CXXFLAGS) -c src/args.cc
 
-autotune.o: src/autotune.cc src/autotune.h
+autotune.o: src/autotune.cc src/autotune.h src/args.h src/fasttext.h
 	$(CXX) $(CXXFLAGS) -c src/autotune.cc
 
 matrix.o: src/matrix.cc src/matrix.h
 	$(CXX) $(CXXFLAGS) -c src/matrix.cc
 
-dictionary.o: src/dictionary.cc src/dictionary.h src/args.h
+dictionary.o: src/dictionary.cc src/dictionary.h src/args.h src/encoding.h src/layout.h src/utils.h
 	$(CXX) $(CXXFLAGS) -c src/dictionary.cc
 
 loss.o: src/loss.cc src/loss.h src/matrix.h src/real.h
@@ -65,6 +65,15 @@ meter.o: src/meter.cc src/meter.h
 fasttext.o: src/fasttext.cc src/*.h
 	$(CXX) $(CXXFLAGS) -c src/fasttext.cc
 
+modelcompat.o: src/modelcompat.cc src/modelcompat.h src/args.h
+	$(CXX) $(CXXFLAGS) -c src/modelcompat.cc
+
+encoding.o: src/encoding.cc src/encoding.h
+	$(CXX) $(CXXFLAGS) -c src/encoding.cc
+
+layout.o: src/layout.cc src/layout.h
+	$(CXX) $(CXXFLAGS) -c src/layout.cc
+
 fasttext: $(OBJS) src/fasttext.cc src/main.cc
 	$(CXX) $(CXXFLAGS) $(OBJS) src/main.cc -o fasttext
 
@@ -74,7 +83,7 @@ clean:
 
 EMCXX = em++
 EMCXXFLAGS = --bind --std=c++11 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s "EXTRA_EXPORTED_RUNTIME_METHODS=['addOnPostRun', 'FS']" -s "DISABLE_EXCEPTION_CATCHING=0" -s "EXCEPTION_DEBUG=1" -s "FORCE_FILESYSTEM=1" -s "MODULARIZE=1" -s "EXPORT_ES6=1" -s 'EXPORT_NAME="FastTextModule"' -Isrc/
-EMOBJS = args.bc autotune.bc matrix.bc dictionary.bc loss.bc productquantizer.bc densematrix.bc quantmatrix.bc vector.bc model.bc utils.bc meter.bc fasttext.bc main.bc
+EMOBJS = args.bc autotune.bc matrix.bc dictionary.bc loss.bc productquantizer.bc densematrix.bc quantmatrix.bc vector.bc model.bc utils.bc meter.bc fasttext.bc main.bc modelcompat.bc encoding.bc layout.bc
 
 
 main.bc: webassembly/fasttext_wasm.cc
@@ -118,6 +127,15 @@ meter.bc: src/meter.cc src/meter.h
 
 fasttext.bc: src/fasttext.cc src/*.h
 	$(EMCXX) $(EMCXXFLAGS)  src/fasttext.cc -o fasttext.bc
+
+modelcompat.bc: src/modelcompat.cc src/modelcompat.h src/args.h
+	$(EMCXX) $(EMCXXFLAGS) src/modelcompat.cc -o modelcompat.bc
+
+encoding.bc: src/encoding.cc src/encoding.h
+	$(EMCXX) $(EMCXXFLAGS) src/encoding.cc -o encoding.bc
+
+layout.bc: src/layout.cc src/layout.h
+	$(EMCXX) $(EMCXXFLAGS) src/layout.cc -o layout.bc
 
 webassembly/fasttext_wasm.js: $(EMOBJS) webassembly/fasttext_wasm.cc Makefile
 	$(EMCXX) $(EMCXXFLAGS) $(EMOBJS) -o webassembly/fasttext_wasm.js

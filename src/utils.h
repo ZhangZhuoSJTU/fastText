@@ -67,6 +67,8 @@ class ClockPrint {
 
 bool compareFirstLess(const std::pair<double, double>& l, const double& r);
 
+int32_t spanDelta(int32_t lhs, int32_t rhs);
+
 } // namespace utils
 
 } // namespace fasttext

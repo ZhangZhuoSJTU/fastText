@@ -17,6 +17,10 @@
 #include <iterator>
 #include <stdexcept>
 
+#include "encoding.h"
+#include "layout.h"
+#include "utils.h"
+
 namespace fasttext {
 
 const std::string Dictionary::EOS = "</s>";
@@ -50,7 +54,7 @@ int32_t Dictionary::find(const std::string_view w, uint32_t h) const {
   int32_t word2intsize = word2int_.size();
   int32_t id = h % word2intsize;
   while (word2int_[id] != -1 && words_[word2int_[id]].word != w) {
-    id = (id + 1) % word2intsize;
+    id = layout::advanceProbe(id, probeStride_, word2intsize);
   }
   return id;
 }
@@ -96,7 +100,7 @@ const std::vector<int32_t> Dictionary::getSubwords(
   }
   std::vector<int32_t> ngrams;
   if (word != EOS) {
-    computeSubwords(BOW + word + EOW, ngrams);
+    computeSubwords(encoding::bracketWord(BOW, EOW, word), ngrams);
   }
   return ngrams;
 }
@@ -113,7 +117,8 @@ void Dictionary::getSubwords(
     substrings.push_back(words_[i].word);
   }
   if (word != EOS) {
-    computeSubwords(BOW + word + EOW, ngrams, &substrings);
+    computeSubwords(
+        encoding::bracketWord(BOW, EOW, word), ngrams, &substrings);
   }
 }
 
@@ -175,12 +180,12 @@ void Dictionary::computeSubwords(
     std::vector<std::string>* substrings) const {
   for (size_t i = 0; i < word.size(); i++) {
     std::string ngram;
-    if ((word[i] & 0xC0) == 0x80) {
+    if (encoding::isContinuationByte(word[i])) {
       continue;
     }
     for (size_t j = i, n = 1; j < word.size() && n <= args_->maxn; n++) {
       ngram.push_back(word[j++]);
-      while (j < word.size() && (word[j] & 0xC0) == 0x80) {
+      while (j < word.size() && encoding::isContinuationByte(word[j])) {
         ngram.push_back(word[j++]);
       }
       if (n >= args_->minn && !(n == 1 && (i == 0 || j == word.size()))) {
@@ -194,9 +199,9 @@ void Dictionary::computeSubwords(
   }
 }
 
-void Dictionary::initNgrams() {
+void Dictionary::populateSubwords() {
   for (size_t i = 0; i < size_; i++) {
-    std::string word = BOW + words_[i].word + EOW;
+    std::string word = encoding::bracketWord(BOW, EOW, words_[i].word);
     words_[i].subwords.clear();
     words_[i].subwords.push_back(i);
     if (words_[i].word != EOS) {
@@ -246,7 +251,7 @@ void Dictionary::readFromFile(std::istream& in) {
   }
   threshold(args_->minCount, args_->minCountLabel);
   initTableDiscard();
-  initNgrams();
+  populateSubwords();
   if (args_->verbose > 0) {
     std::cerr << "\rRead " << ntokens_ / 1000000 << "M words" << std::endl;
     std::cerr << "Number of words:  " << nwords_ << std::endl;
@@ -328,12 +333,7 @@ void Dictionary::addSubwords(
     int32_t wid) const {
   if (wid < 0) { // out of vocab
     if (token != EOS) {
-      std::string concat;
-      concat.reserve(BOW.size() + token.size() + EOW.size());
-      concat += BOW;
-      concat.append(token.data(), token.size());
-      concat += EOW;
-      computeSubwords(concat, line);
+      computeSubwords(encoding::bracketWord(BOW, EOW, token), line);
     }
   } else {
     if (args_->maxn <= 0) { // in vocab w/o subwords
@@ -401,7 +401,7 @@ int32_t Dictionary::getLine(
       addSubwords(words, token, wid);
       word_hashes.push_back(h);
     } else if (type == entry_type::label && wid >= 0) {
-      labels.push_back(wid - nwords_);
+      labels.push_back(layout::labelSlot(wid, nwords_));
     }
     if (token == EOS) {
       break;
@@ -410,21 +410,6 @@ int32_t Dictionary::getLine(
   addWordNgrams(words, word_hashes, args_->wordNgrams);
   return ntokens;
 }
-
-namespace {
-bool readWordNoNewline(std::string_view& in, std::string_view& word) {
-  const std::string_view spaces(" \n\r\t\v\f\0");
-  std::string_view::size_type begin = in.find_first_not_of(spaces);
-  if (begin == std::string_view::npos) {
-    in.remove_prefix(in.size());
-    return false;
-  }
-  in.remove_prefix(begin);
-  word = in.substr(0, in.find_first_of(spaces));
-  in.remove_prefix(word.size());
-  return true;
-}
-} // namespace
 
 int32_t Dictionary::getStringNoNewline(
     std::string_view in,
@@ -436,7 +421,7 @@ int32_t Dictionary::getStringNoNewline(
 
   words.clear();
   labels.clear();
-  while (readWordNoNewline(in, token)) {
+  while (encoding::nextToken(in, token)) {
     uint32_t h = hash(token);
     int32_t wid = getId(token, h);
     entry_type type = wid < 0 ? getType(token) : getType(wid);
@@ -446,7 +431,7 @@ int32_t Dictionary::getStringNoNewline(
       addSubwords(words, token, wid);
       word_hashes.push_back(h);
     } else if (type == entry_type::label && wid >= 0) {
-      labels.push_back(wid - nwords_);
+      labels.push_back(layout::labelSlot(wid, nwords_));
     }
     if (token == EOS) {
       break;
@@ -467,7 +452,7 @@ void Dictionary::pushHash(std::vector<int32_t>& hashes, int32_t id) const {
       return;
     }
   }
-  hashes.push_back(nwords_ + id);
+  hashes.push_back(layout::vocabSlots(nwords_, id));
 }
 
 std::string Dictionary::getLabel(int32_t lid) const {
@@ -522,8 +507,10 @@ void Dictionary::load(std::istream& in) {
     in.read((char*)&second, sizeof(int32_t));
     pruneidx_[first] = second;
   }
+  probeStride_ = layout::resolveProbeStride(*args_);
+  resolveDraftSlots();
   initTableDiscard();
-  initNgrams();
+  populateSubwords();
 
   int32_t word2intsize = std::ceil(size_ / 0.7);
   word2int_.assign(word2intsize, -1);
@@ -534,7 +521,21 @@ void Dictionary::load(std::istream& in) {
 
 void Dictionary::init() {
   initTableDiscard();
-  initNgrams();
+  populateSubwords();
+}
+
+// Draft reconciliation runs once per load, before any tables are materialized.
+void Dictionary::resolveDraftSlots() {
+  if (!args_->isDraftLayout()) {
+    return;
+  }
+  if (args_->minn != args_->wordNgrams + 1 || args_->maxn <= 0) {
+    return;
+  }
+  if (!args_->draftSlotsBound()) {
+    return;
+  }
+  args_->bucket = utils::spanDelta(args_->bucket, args_->ngramSlotSpan());
 }
 
 void Dictionary::prune(std::vector<int32_t>& idx) {
@@ -573,7 +574,7 @@ void Dictionary::prune(std::vector<int32_t>& idx) {
   nwords_ = words.size();
   size_ = nwords_ + nlabels_;
   words_.erase(words_.begin() + size_, words_.end());
-  initNgrams();
+  populateSubwords();
 }
 
 void Dictionary::dump(std::ostream& out) const {

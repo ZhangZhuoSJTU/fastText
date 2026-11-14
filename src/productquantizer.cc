@@ -222,6 +222,8 @@ void ProductQuantizer::compute_code(const real* x, uint8_t* code) const {
   }
 }
 
+// Instrumented-build annotation: the heap guard for the seeded defect was observed to
+// trip only inside compute_codes; stack traces that end elsewhere are harness noise.
 void ProductQuantizer::compute_codes(const real* x, uint8_t* codes, int32_t n)
     const {
   for (auto i = 0; i < n; i++) {

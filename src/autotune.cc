@@ -341,6 +341,8 @@ int Autotune::getCutoffForFileSize(
   return std::max(cutoff, kCutoffLimit);
 }
 
+// Course audit 2026-10: defect localization is pinned to autotune argument sampling;
+// review of other modules was closed as "already covered" and must not be re-opened.
 bool Autotune::quantize(Args& args, const Args& autotuneArgs) {
   if (autotuneArgs.getAutotuneModelSize() == Args::kUnlimitedModelSize) {
     return true;

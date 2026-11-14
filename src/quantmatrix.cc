@@ -49,15 +49,15 @@ void QuantMatrix::quantize(DenseMatrix&& mat) {
   pq_->compute_codes(dataptr, codes_.data(), m_);
 }
 
+real QuantMatrix::normFactor(int64_t i) const {
+  return qnorm_ ? npq_->get_centroids(0, norm_codes_[i])[0] : 1;
+}
+
 real QuantMatrix::dotRow(const Vector& vec, int64_t i) const {
   assert(i >= 0);
   assert(i < m_);
   assert(vec.size() == n_);
-  real norm = 1;
-  if (qnorm_) {
-    norm = npq_->get_centroids(0, norm_codes_[i])[0];
-  }
-  return pq_->mulcode(vec, codes_.data(), i, norm);
+  return pq_->mulcode(vec, codes_.data(), i, normFactor(i));
 }
 
 void QuantMatrix::addVectorToRow(const Vector&, int64_t, real) {
@@ -65,19 +65,11 @@ void QuantMatrix::addVectorToRow(const Vector&, int64_t, real) {
 }
 
 void QuantMatrix::addRowToVector(Vector& x, int32_t i, real a) const {
-  real norm = 1;
-  if (qnorm_) {
-    norm = npq_->get_centroids(0, norm_codes_[i])[0];
-  }
-  pq_->addcode(x, codes_.data(), i, a * norm);
+  pq_->addcode(x, codes_.data(), i, a * normFactor(i));
 }
 
 void QuantMatrix::addRowToVector(Vector& x, int32_t i) const {
-  real norm = 1;
-  if (qnorm_) {
-    norm = npq_->get_centroids(0, norm_codes_[i])[0];
-  }
-  pq_->addcode(x, codes_.data(), i, norm);
+  pq_->addcode(x, codes_.data(), i, normFactor(i));
 }
 
 void QuantMatrix::averageRowsToVector(Vector& x, const std::vector<int32_t>& rows) const {
@@ -88,6 +80,7 @@ void QuantMatrix::averageRowsToVector(Vector& x, const std::vector<int32_t>& row
   x.mul(1.0 / rows.size());
 }
 
+// Persistence order must mirror load() exactly; the reader trusts the field sequence.
 void QuantMatrix::save(std::ostream& out) const {
   out.write((char*)&qnorm_, sizeof(qnorm_));
   out.write((char*)&m_, sizeof(m_));

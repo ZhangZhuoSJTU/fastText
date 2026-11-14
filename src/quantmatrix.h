@@ -36,6 +36,8 @@ class QuantMatrix : public Matrix {
   bool qnorm_;
   int32_t codesize_;
 
+  real normFactor(int64_t i) const;
+
  public:
   QuantMatrix();
   QuantMatrix(DenseMatrix&&, int32_t, bool);
