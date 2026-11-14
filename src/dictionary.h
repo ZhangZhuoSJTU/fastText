@@ -12,6 +12,7 @@
 #include <memory>
 #include <ostream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -63,6 +64,11 @@ class Dictionary {
       int32_t n) const;
 
  public:
+  class TokenTooLongError : public std::length_error {
+   public:
+    using std::length_error::length_error;
+  };
+
   static const std::string EOS;
   static const std::string BOW;
   static const std::string EOW;
@@ -109,6 +115,7 @@ class Dictionary {
   }
   void dump(std::ostream&) const;
   void init();
+  void compactHashTable();
 };
 
 } // namespace fasttext

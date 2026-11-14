@@ -39,25 +39,33 @@ void DenseMatrix::uniformThread(real a, int block, int32_t seed) {
   std::minstd_rand rng(block + seed);
   std::uniform_real_distribution<> uniform(-a, a);
   int64_t blockSize = (m_ * n_) / 10;
-  for (int64_t i = blockSize * block;
-       i < (m_ * n_) && i < blockSize * (block + 1);
-       i++) {
+  const int64_t end = block == 9 ? m_ * n_ : blockSize * (block + 1);
+  for (int64_t i = blockSize * block; i < end; i++) {
     data_[i] = uniform(rng);
   }
 }
 
 void DenseMatrix::uniform(real a, unsigned int thread, int32_t seed) {
-  if (thread > 1) {
+  // Keep the ten seeded blocks independent of the number of worker threads.
+  // Every block must run, including when training uses just one worker.
+  const unsigned int workers = std::max(1u, std::min(thread, 10u));
+  if (workers > 1) {
     std::vector<std::thread> threads;
-    for (int i = 0; i < thread; i++) {
-      threads.push_back(std::thread([=]() { uniformThread(a, i, seed); }));
+    for (unsigned int i = 0; i < workers; i++) {
+      threads.push_back(std::thread([=]() {
+        for (unsigned int block = i; block < 10; block += workers) {
+          uniformThread(a, block, seed);
+        }
+      }));
     }
     for (int32_t i = 0; i < threads.size(); i++) {
       threads[i].join();
     }
   } else {
     // webassembly can't instantiate `std::thread`
-    uniformThread(a, 0, seed);
+    for (int block = 0; block < 10; ++block) {
+      uniformThread(a, block, seed);
+    }
   }
 }
 
@@ -155,16 +163,22 @@ void DenseMatrix::addRowToVector(Vector& x, int32_t i, real a) const {
 using Register = __m512;
 inline Register Add(Register first, Register second) { return _mm512_add_ps(first, second); }
 inline Register Set1(float to) { return _mm512_set1_ps(to); }
+inline Register Load(const float* from) { return _mm512_loadu_ps(from); }
+inline void Store(float* to, Register value) { _mm512_storeu_ps(to, value); }
 inline Register Multiply(Register first, Register second) { return _mm512_mul_ps(first, second); }
 #elif defined(__AVX__)
 using Register = __m256;
 inline Register Add(Register first, Register second) { return _mm256_add_ps(first, second); }
 inline Register Set1(float to) { return _mm256_set1_ps(to); }
+inline Register Load(const float* from) { return _mm256_loadu_ps(from); }
+inline void Store(float* to, Register value) { _mm256_storeu_ps(to, value); }
 inline Register Multiply(Register first, Register second) { return _mm256_mul_ps(first, second); }
 #elif defined(__SSE__)
 using Register = __m128;
 inline Register Add(Register first, Register second) { return _mm_add_ps(first, second); }
 inline Register Set1(float to) { return _mm_set1_ps(to); }
+inline Register Load(const float* from) { return _mm_loadu_ps(from); }
+inline void Store(float* to, Register value) { _mm_storeu_ps(to, value); }
 inline Register Multiply(Register first, Register second) { return _mm_mul_ps(first, second); }
 #endif
 
@@ -175,9 +189,6 @@ template <unsigned Cols> void averageRowsFast(Vector& x, const std::vector<int32
   // Columns must be a multiple of how many floats fit in a register.
   static_assert(Cols % (sizeof(Register) / 4) == 0);
   constexpr unsigned RegisterCount = Cols / (sizeof(Register) / 4);
-  // These should be aligned by aligned.h
-  assert(reinterpret_cast<uintptr_t>(x.data()) % sizeof(Register) == 0);
-  assert(reinterpret_cast<uintptr_t>(matrix.data()) % sizeof(Register) == 0);
 
   // Guard against empty list of rows with default NaN behavior.
   if (rows.empty()) {
@@ -189,21 +200,21 @@ template <unsigned Cols> void averageRowsFast(Vector& x, const std::vector<int32
   // Copy the first row to accumulation registers.
   Register accum[RegisterCount];
   auto row = rows.cbegin();
-  const Register *base = reinterpret_cast<const Register*>(matrix.data() + matrix.cols() * *row);
+  const real* base = matrix.data() + matrix.cols() * *row;
   for (unsigned i = 0; i < RegisterCount; ++i) {
-    accum[i] = base[i];
+    accum[i] = Load(base + i * (sizeof(Register) / sizeof(real)));
   }
   // Add the rows after the first.
   for (++row; row != rows.cend(); ++row) {
-    base = reinterpret_cast<const Register*>(matrix.data() + matrix.cols() * *row);
+    base = matrix.data() + matrix.cols() * *row;
     for (unsigned i = 0; i < RegisterCount; ++i) {
-      accum[i] = Add(accum[i], base[i]);
+      accum[i] = Add(accum[i], Load(base + i * (sizeof(Register) / sizeof(real))));
     }
   }
   // Multiply by (1.0 / rows.size()) and write to x.
   Register mul = Set1(1.0 / rows.size());
   for (unsigned i = 0; i < RegisterCount; ++i) {
-    reinterpret_cast<Register*>(x.data())[i] = Multiply(accum[i], mul);
+    Store(x.data() + i * (sizeof(Register) / sizeof(real)), Multiply(accum[i], mul));
   }
 }
 #endif
@@ -218,6 +229,8 @@ void DenseMatrix::averageRowsToVector(Vector& x, const std::vector<int32_t>& row
     case 256:
       averageRowsFast<256>(x, rows, *this);
       return;
+    case 48:
+      break;
     case 64:
       averageRowsFast<64>(x, rows, *this);
       return;

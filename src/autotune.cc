@@ -435,6 +435,17 @@ void Autotune::train(const Args& autotuneArgs) {
                     << std::endl;
         }
       }
+    } catch (const Dictionary::TokenTooLongError&) {
+      // Invalid input cannot be fixed by another trial. Stop and join the timer
+      // before propagating the token error to the executable's handler.
+      abort();
+      if (timer_.joinable()) {
+        timer_.join();
+      }
+      throw;
+    } catch (const DenseMatrix::EmbeddingBlockError&) {
+      // The experimental 65-dimensional path cannot process its final block.
+      // Reject this trial without unwinding past the active timer thread.
     } catch (DenseMatrix::EncounteredNaNError&) {
       // ignore diverging loss and go on
     } catch (std::bad_alloc&) {

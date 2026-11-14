@@ -669,6 +669,10 @@ void FastText::trainThread(int32_t threadId, const TrainCallback& callback) {
         }
       }
     }
+  } catch (const Dictionary::TokenTooLongError&) {
+    trainException_ = std::current_exception();
+  } catch (const DenseMatrix::EmbeddingBlockError&) {
+    trainException_ = std::current_exception();
   } catch (DenseMatrix::EncounteredNaNError&) {
     trainException_ = std::current_exception();
   }
@@ -761,6 +765,8 @@ void FastText::train(const Args& args, const TrainCallback& callback) {
     input_ = createRandomMatrix();
   }
   output_ = createTrainOutputMatrix();
+  // Release the old lookup table only after the model matrices are initialized.
+  dict_->compactHashTable();
   quant_ = false;
   auto loss = createLoss(output_);
   bool normalizeGradient = (args_->model == model_name::sup);

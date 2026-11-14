@@ -29,6 +29,11 @@ class DenseMatrix : public Matrix {
   void uniformThread(real, int, int32_t);
 
  public:
+  class EmbeddingBlockError : public std::out_of_range {
+   public:
+    using std::out_of_range::out_of_range;
+  };
+
   DenseMatrix();
   explicit DenseMatrix(int64_t, int64_t);
   explicit DenseMatrix(int64_t m, int64_t n, real* dataPtr);

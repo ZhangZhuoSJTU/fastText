@@ -10,6 +10,7 @@
 #include <iostream>
 #include <queue>
 #include <stdexcept>
+#include <utility>
 #include "args.h"
 #include "autotune.h"
 #include "fasttext.h"
@@ -47,34 +48,90 @@ void printQuantizeUsage() {
   std::cerr << "usage: fasttext quantize <args>" << std::endl;
 }
 
+namespace {
+
+void printEvaluationUsage(const char* command, bool supportsStdin) {
+  std::cerr << "usage: fasttext " << command
+            << " <model> <test-data> [<k>] [<th>]\n\n"
+            << "  <model>      model filename\n"
+            << "  <test-data>  test data filename";
+  if (supportsStdin) {
+    std::cerr << " (if -, read from stdin)";
+  }
+  std::cerr << "\n"
+            << "  <k>          (optional; 1 by default) predict top k labels\n"
+            << "  <th>         (optional; 0.0 by default) probability threshold\n"
+            << std::endl;
+}
+
+std::istream& openInput(
+    const std::string& path,
+    std::ifstream& file,
+    const char* errorMessage) {
+  if (path == "-") {
+    return std::cin;
+  }
+  file.open(path);
+  if (!file.is_open()) {
+    std::cerr << errorMessage << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  return file;
+}
+
+std::pair<int32_t, real> predictionOptions(
+    const std::vector<std::string>& args) {
+  const int32_t k = args.size() > 4 ? std::stoi(args[4]) : 1;
+  const real threshold = args.size() > 5 ? std::stof(args[5]) : 0.0;
+  return {k, threshold};
+}
+
+void writeLabelMetric(const std::string& name, double value) {
+  std::cout << name << " : ";
+  if (std::isfinite(value)) {
+    std::cout << value;
+  } else {
+    std::cout << "--------";
+  }
+  std::cout << "  ";
+}
+
+void writeLabelMetrics(FastText& fasttext, Meter& meter) {
+  std::cout << std::fixed << std::setprecision(6);
+  const auto dict = fasttext.getDictionary();
+  for (int32_t labelId = 0; labelId < dict->nlabels(); ++labelId) {
+    writeLabelMetric("F1-Score", meter.f1Score(labelId));
+    writeLabelMetric("Precision", meter.precision(labelId));
+    writeLabelMetric("Recall", meter.recall(labelId));
+    std::cout << " " << dict->getLabel(labelId) << std::endl;
+  }
+}
+
+int32_t neighborCount(
+    const std::vector<std::string>& args,
+    void (*printHelp)()) {
+  if (args.size() == 3) {
+    return 10;
+  }
+  if (args.size() == 4) {
+    return std::stoi(args[3]);
+  }
+  printHelp();
+  exit(EXIT_FAILURE);
+}
+
+} // namespace
+
 void printTestUsage() {
-  std::cerr
-      << "usage: fasttext test <model> <test-data> [<k>] [<th>]\n\n"
-      << "  <model>      model filename\n"
-      << "  <test-data>  test data filename (if -, read from stdin)\n"
-      << "  <k>          (optional; 1 by default) predict top k labels\n"
-      << "  <th>         (optional; 0.0 by default) probability threshold\n"
-      << std::endl;
+  printEvaluationUsage("test", true);
 }
 
 void printPredictUsage() {
-  std::cerr
-      << "usage: fasttext predict[-prob] <model> <test-data> [<k>] [<th>]\n\n"
-      << "  <model>      model filename\n"
-      << "  <test-data>  test data filename (if -, read from stdin)\n"
-      << "  <k>          (optional; 1 by default) predict top k labels\n"
-      << "  <th>         (optional; 0.0 by default) probability threshold\n"
-      << std::endl;
+  printEvaluationUsage("predict[-prob]", true);
 }
 
 void printTestLabelUsage() {
-  std::cerr
-      << "usage: fasttext test-label <model> <test-data> [<k>] [<th>]\n\n"
-      << "  <model>      model filename\n"
-      << "  <test-data>  test data filename\n"
-      << "  <k>          (optional; 1 by default) predict top k labels\n"
-      << "  <th>         (optional; 0.0 by default) probability threshold\n"
-      << std::endl;
+  printEvaluationUsage("test-label", false);
 }
 
 void printPrintWordVectorsUsage() {
@@ -142,44 +199,22 @@ void test(const std::vector<std::string>& args) {
 
   const auto& model = args[2];
   const auto& input = args[3];
-  int32_t k = args.size() > 4 ? std::stoi(args[4]) : 1;
-  real threshold = args.size() > 5 ? std::stof(args[5]) : 0.0;
+  const auto options = predictionOptions(args);
+  const int32_t k = options.first;
+  const real threshold = options.second;
 
   FastText fasttext;
   fasttext.loadModel(model);
-
   Meter meter(false);
-
-  if (input == "-") {
-    fasttext.test(std::cin, k, threshold, meter);
-  } else {
-    std::ifstream ifs(input);
-    if (!ifs.is_open()) {
-      std::cerr << "Test file cannot be opened!" << std::endl;
-      exit(EXIT_FAILURE);
-    }
-    fasttext.test(ifs, k, threshold, meter);
+  std::ifstream file;
+  auto& in = openInput(input, file, "Test file cannot be opened!");
+  fasttext.test(in, k, threshold, meter);
+  if (file.is_open()) {
+    file.close();
   }
 
   if (perLabel) {
-    std::cout << std::fixed << std::setprecision(6);
-    auto writeMetric = [](const std::string& name, double value) {
-      std::cout << name << " : ";
-      if (std::isfinite(value)) {
-        std::cout << value;
-      } else {
-        std::cout << "--------";
-      }
-      std::cout << "  ";
-    };
-
-    std::shared_ptr<const Dictionary> dict = fasttext.getDictionary();
-    for (int32_t labelId = 0; labelId < dict->nlabels(); labelId++) {
-      writeMetric("F1-Score", meter.f1Score(labelId));
-      writeMetric("Precision", meter.precision(labelId));
-      writeMetric("Recall", meter.recall(labelId));
-      std::cout << " " << dict->getLabel(labelId) << std::endl;
-    }
+    writeLabelMetrics(fasttext, meter);
   }
   meter.writeGeneralMetrics(std::cout, k);
 
@@ -214,30 +249,16 @@ void predict(const std::vector<std::string>& args) {
     printPredictUsage();
     exit(EXIT_FAILURE);
   }
-  int32_t k = 1;
-  real threshold = 0.0;
-  if (args.size() > 4) {
-    k = std::stoi(args[4]);
-    if (args.size() == 6) {
-      threshold = std::stof(args[5]);
-    }
-  }
+  const auto options = predictionOptions(args);
+  const int32_t k = options.first;
+  const real threshold = options.second;
 
   bool printProb = args[1] == "predict-prob";
   FastText fasttext;
   fasttext.loadModel(std::string(args[2]));
 
   std::ifstream ifs;
-  std::string infile(args[3]);
-  bool inputIsStdIn = infile == "-";
-  if (!inputIsStdIn) {
-    ifs.open(infile);
-    if (!inputIsStdIn && !ifs.is_open()) {
-      std::cerr << "Input file cannot be opened!" << std::endl;
-      exit(EXIT_FAILURE);
-    }
-  }
-  std::istream& in = inputIsStdIn ? std::cin : ifs;
+  auto& in = openInput(args[3], ifs, "Input file cannot be opened!");
   std::vector<std::pair<real, std::string>> predictions;
   while (fasttext.predictLine(in, predictions, k, threshold)) {
     printPredictions(predictions, printProb, false);
@@ -249,7 +270,7 @@ void predict(const std::vector<std::string>& args) {
   exit(0);
 }
 
-void printWordVectors(const std::vector<std::string> args) {
+void printWordVectors(const std::vector<std::string>& args) {
   if (args.size() != 3) {
     printPrintWordVectorsUsage();
     exit(EXIT_FAILURE);
@@ -265,7 +286,7 @@ void printWordVectors(const std::vector<std::string> args) {
   exit(0);
 }
 
-void printSentenceVectors(const std::vector<std::string> args) {
+void printSentenceVectors(const std::vector<std::string>& args) {
   if (args.size() != 3) {
     printPrintSentenceVectorsUsage();
     exit(EXIT_FAILURE);
@@ -281,7 +302,7 @@ void printSentenceVectors(const std::vector<std::string> args) {
   exit(0);
 }
 
-void printNgrams(const std::vector<std::string> args) {
+void printNgrams(const std::vector<std::string>& args) {
   if (args.size() != 4) {
     printPrintNgramsUsage();
     exit(EXIT_FAILURE);
@@ -300,16 +321,8 @@ void printNgrams(const std::vector<std::string> args) {
   exit(0);
 }
 
-void nn(const std::vector<std::string> args) {
-  int32_t k;
-  if (args.size() == 3) {
-    k = 10;
-  } else if (args.size() == 4) {
-    k = std::stoi(args[3]);
-  } else {
-    printNNUsage();
-    exit(EXIT_FAILURE);
-  }
+void nn(const std::vector<std::string>& args) {
+  const int32_t k = neighborCount(args, printNNUsage);
   FastText fasttext;
   fasttext.loadModel(std::string(args[2]));
   std::string prompt("Query word? ");
@@ -323,16 +336,8 @@ void nn(const std::vector<std::string> args) {
   exit(0);
 }
 
-void analogies(const std::vector<std::string> args) {
-  int32_t k;
-  if (args.size() == 3) {
-    k = 10;
-  } else if (args.size() == 4) {
-    k = std::stoi(args[3]);
-  } else {
-    printAnalogiesUsage();
-    exit(EXIT_FAILURE);
-  }
+void analogies(const std::vector<std::string>& args) {
+  const int32_t k = neighborCount(args, printAnalogiesUsage);
   if (k <= 0) {
     throw std::invalid_argument("k needs to be 1 or higher!");
   }
@@ -355,7 +360,7 @@ void analogies(const std::vector<std::string> args) {
   exit(0);
 }
 
-void train(const std::vector<std::string> args) {
+void train(const std::vector<std::string>& args) {
   Args a = Args();
   a.parseArgs(args);
   std::shared_ptr<FastText> fasttext = std::make_shared<FastText>();
@@ -419,36 +424,47 @@ void dump(const std::vector<std::string>& args) {
   }
 }
 
-int main(int argc, char** argv) {
+int runCommand(int argc, char** argv) {
   std::vector<std::string> args(argv, argv + argc);
   if (args.size() < 2) {
     printUsage();
     exit(EXIT_FAILURE);
   }
-  std::string command(args[1]);
-  if (command == "skipgram" || command == "cbow" || command == "supervised") {
-    train(args);
-  } else if (command == "test" || command == "test-label") {
-    test(args);
-  } else if (command == "quantize") {
-    quantize(args);
-  } else if (command == "print-word-vectors") {
-    printWordVectors(args);
-  } else if (command == "print-sentence-vectors") {
-    printSentenceVectors(args);
-  } else if (command == "print-ngrams") {
-    printNgrams(args);
-  } else if (command == "nn") {
-    nn(args);
-  } else if (command == "analogies") {
-    analogies(args);
-  } else if (command == "predict" || command == "predict-prob") {
-    predict(args);
-  } else if (command == "dump") {
-    dump(args);
-  } else {
-    printUsage();
-    exit(EXIT_FAILURE);
+  using CommandHandler = void (*)(const std::vector<std::string>&);
+  static const std::pair<const char*, CommandHandler> commands[] = {
+      {"skipgram", train},
+      {"cbow", train},
+      {"supervised", train},
+      {"test", test},
+      {"test-label", test},
+      {"quantize", quantize},
+      {"print-word-vectors", printWordVectors},
+      {"print-sentence-vectors", printSentenceVectors},
+      {"print-ngrams", printNgrams},
+      {"nn", nn},
+      {"analogies", analogies},
+      {"predict", predict},
+      {"predict-prob", predict},
+      {"dump", dump},
+  };
+  for (const auto& command : commands) {
+    if (args[1] == command.first) {
+      command.second(args);
+      return 0;
+    }
   }
-  return 0;
+  printUsage();
+  exit(EXIT_FAILURE);
+}
+
+int main(int argc, char** argv) {
+  try {
+    return runCommand(argc, argv);
+  } catch (const Dictionary::TokenTooLongError& e) {
+    std::cerr << "[INPUT REJECTED] " << e.what() << '\n';
+    return 2;
+  } catch (const DenseMatrix::EmbeddingBlockError& e) {
+    std::cerr << "[INPUT REJECTED] " << e.what() << '\n';
+    return 2;
+  }
 }
