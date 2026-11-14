@@ -33,7 +33,10 @@ set(HEADER_FILES
     src/quantmatrix.h
     src/real.h
     src/utils.h
-    src/vector.h)
+    src/vector.h
+    src/modelcompat.h
+    src/encoding.h
+    src/layout.h)
 
 set(SOURCE_FILES
     src/args.cc
@@ -49,7 +52,10 @@ set(SOURCE_FILES
     src/productquantizer.cc
     src/quantmatrix.cc
     src/utils.cc
-    src/vector.cc)
+    src/vector.cc
+    src/modelcompat.cc
+    src/encoding.cc
+    src/layout.cc)
 
 
 if (NOT MSVC)

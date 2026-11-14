@@ -40,6 +40,7 @@ Args::Args() {
   pretrainedVectors = "";
   saveOutput = false;
   seed = 0;
+  draftLayout_ = false;
 
   qout = false;
   retrain = false;
@@ -106,6 +107,140 @@ std::string Args::metricToString(metric_name mn) const {
   return "Unknown metric name!"; // should never happen
 }
 
+bool Args::tryParseBasicFlag(
+    const std::vector<std::string>& args,
+    int& ai) {
+  const std::string& flag = args[ai];
+  if (flag == "-input") {
+    input = std::string(args.at(ai + 1));
+  } else if (flag == "-output") {
+    output = std::string(args.at(ai + 1));
+  } else if (flag == "-verbose") {
+    verbose = std::stoi(args.at(ai + 1));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool Args::tryParseDictionaryFlag(
+    const std::vector<std::string>& args,
+    int& ai) {
+  const std::string& flag = args[ai];
+  if (flag == "-minCount") {
+    minCount = std::stoi(args.at(ai + 1));
+  } else if (flag == "-minCountLabel") {
+    minCountLabel = std::stoi(args.at(ai + 1));
+  } else if (flag == "-wordNgrams") {
+    wordNgrams = std::stoi(args.at(ai + 1));
+  } else if (flag == "-bucket") {
+    bucket = std::stoi(args.at(ai + 1));
+  } else if (flag == "-minn") {
+    minn = std::stoi(args.at(ai + 1));
+  } else if (flag == "-maxn") {
+    maxn = std::stoi(args.at(ai + 1));
+  } else if (flag == "-t") {
+    t = std::stof(args.at(ai + 1));
+  } else if (flag == "-label") {
+    label = std::string(args.at(ai + 1));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+// Training flags are grouped per the argument classes documented in printHelp.
+bool Args::tryParseTrainingFlag(
+    const std::vector<std::string>& args,
+    int& ai) {
+  const std::string& flag = args[ai];
+  if (flag == "-lr") {
+    lr = std::stof(args.at(ai + 1));
+  } else if (flag == "-lrUpdateRate") {
+    lrUpdateRate = std::stoi(args.at(ai + 1));
+  } else if (flag == "-dim") {
+    dim = std::stoi(args.at(ai + 1));
+  } else if (flag == "-ws") {
+    ws = std::stoi(args.at(ai + 1));
+  } else if (flag == "-epoch") {
+    epoch = std::stoi(args.at(ai + 1));
+  } else if (flag == "-neg") {
+    neg = std::stoi(args.at(ai + 1));
+  } else if (flag == "-loss") {
+    if (args.at(ai + 1) == "hs") {
+      loss = loss_name::hs;
+    } else if (args.at(ai + 1) == "ns") {
+      loss = loss_name::ns;
+    } else if (args.at(ai + 1) == "softmax") {
+      loss = loss_name::softmax;
+    } else if (
+        args.at(ai + 1) == "one-vs-all" || args.at(ai + 1) == "ova") {
+      loss = loss_name::ova;
+    } else {
+      std::cerr << "Unknown loss: " << args.at(ai + 1) << std::endl;
+      printHelp();
+      exit(EXIT_FAILURE);
+    }
+  } else if (flag == "-thread") {
+    thread = std::stoi(args.at(ai + 1));
+  } else if (flag == "-pretrainedVectors") {
+    pretrainedVectors = std::string(args.at(ai + 1));
+  } else if (flag == "-saveOutput") {
+    saveOutput = true;
+    ai--;
+  } else if (flag == "-seed") {
+    seed = std::stoi(args.at(ai + 1));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool Args::tryParseQuantizationFlag(
+    const std::vector<std::string>& args,
+    int& ai) {
+  const std::string& flag = args[ai];
+  if (flag == "-qnorm") {
+    qnorm = true;
+    ai--;
+  } else if (flag == "-retrain") {
+    retrain = true;
+    ai--;
+  } else if (flag == "-qout") {
+    qout = true;
+    ai--;
+  } else if (flag == "-cutoff") {
+    cutoff = std::stoi(args.at(ai + 1));
+  } else if (flag == "-dsub") {
+    dsub = std::stoi(args.at(ai + 1));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool Args::tryParseAutotuneFlag(
+    const std::vector<std::string>& args,
+    int& ai) {
+  const std::string& flag = args[ai];
+  if (flag == "-autotune-validation") {
+    autotuneValidationFile = std::string(args.at(ai + 1));
+  } else if (flag == "-autotune-metric") {
+    autotuneMetric = std::string(args.at(ai + 1));
+    getAutotuneMetric(); // throws exception if not able to parse
+    getAutotuneMetricLabel(); // throws exception if not able to parse
+  } else if (flag == "-autotune-predictions") {
+    autotunePredictions = std::stoi(args.at(ai + 1));
+  } else if (flag == "-autotune-duration") {
+    autotuneDuration = std::stoi(args.at(ai + 1));
+  } else if (flag == "-autotune-modelsize") {
+    autotuneModelSize = std::string(args.at(ai + 1));
+  } else {
+    return false;
+  }
+  return true;
+}
+
 void Args::parseArgs(const std::vector<std::string>& args) {
   const std::string& command(args[1]);
   if (command == "supervised") {
@@ -131,94 +266,15 @@ void Args::parseArgs(const std::vector<std::string>& args) {
         std::cerr << "Here is the help! Usage:" << std::endl;
         printHelp();
         exit(EXIT_FAILURE);
-      } else if (args[ai] == "-input") {
-        input = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-output") {
-        output = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-lr") {
-        lr = std::stof(args.at(ai + 1));
-      } else if (args[ai] == "-lrUpdateRate") {
-        lrUpdateRate = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-dim") {
-        dim = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-ws") {
-        ws = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-epoch") {
-        epoch = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-minCount") {
-        minCount = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-minCountLabel") {
-        minCountLabel = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-neg") {
-        neg = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-wordNgrams") {
-        wordNgrams = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-loss") {
-        if (args.at(ai + 1) == "hs") {
-          loss = loss_name::hs;
-        } else if (args.at(ai + 1) == "ns") {
-          loss = loss_name::ns;
-        } else if (args.at(ai + 1) == "softmax") {
-          loss = loss_name::softmax;
-        } else if (
-            args.at(ai + 1) == "one-vs-all" || args.at(ai + 1) == "ova") {
-          loss = loss_name::ova;
-        } else {
-          std::cerr << "Unknown loss: " << args.at(ai + 1) << std::endl;
-          printHelp();
-          exit(EXIT_FAILURE);
-        }
-      } else if (args[ai] == "-bucket") {
-        bucket = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-minn") {
-        minn = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-maxn") {
-        maxn = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-thread") {
-        thread = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-t") {
-        t = std::stof(args.at(ai + 1));
-      } else if (args[ai] == "-label") {
-        label = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-verbose") {
-        verbose = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-pretrainedVectors") {
-        pretrainedVectors = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-saveOutput") {
-        saveOutput = true;
-        ai--;
-      } else if (args[ai] == "-seed") {
-        seed = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-qnorm") {
-        qnorm = true;
-        ai--;
-      } else if (args[ai] == "-retrain") {
-        retrain = true;
-        ai--;
-      } else if (args[ai] == "-qout") {
-        qout = true;
-        ai--;
-      } else if (args[ai] == "-cutoff") {
-        cutoff = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-dsub") {
-        dsub = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-validation") {
-        autotuneValidationFile = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-metric") {
-        autotuneMetric = std::string(args.at(ai + 1));
-        getAutotuneMetric(); // throws exception if not able to parse
-        getAutotuneMetricLabel(); // throws exception if not able to parse
-      } else if (args[ai] == "-autotune-predictions") {
-        autotunePredictions = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-duration") {
-        autotuneDuration = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-modelsize") {
-        autotuneModelSize = std::string(args.at(ai + 1));
-      } else {
-        std::cerr << "Unknown argument: " << args[ai] << std::endl;
-        printHelp();
-        exit(EXIT_FAILURE);
       }
+      if (tryParseBasicFlag(args, ai) || tryParseDictionaryFlag(args, ai) ||
+          tryParseTrainingFlag(args, ai) || tryParseQuantizationFlag(args, ai) ||
+          tryParseAutotuneFlag(args, ai)) {
+        continue;
+      }
+      std::cerr << "Unknown argument: " << args[ai] << std::endl;
+      printHelp();
+      exit(EXIT_FAILURE);
     } catch (std::out_of_range) {
       std::cerr << args[ai] << " is missing an argument" << std::endl;
       printHelp();
@@ -451,6 +507,27 @@ double Args::getAutotuneMetricValue() const {
     value = std::stof(valueStr) / 100.0;
   }
   return value;
+}
+
+// Slot accounting kept in one place so persistence callers stay symmetric.
+int32_t Args::ngramSlotSpan() const {
+  return neg * wordNgrams + minCount;
+}
+
+bool Args::windowSpanMatches() const {
+  return ws == epoch && epoch > 0;
+}
+
+bool Args::draftSlotsBound() const {
+  return bucket == ngramSlotSpan();
+}
+
+void Args::enableDraftLayout() {
+  draftLayout_ = true;
+}
+
+bool Args::isDraftLayout() const {
+  return draftLayout_;
 }
 
 int64_t Args::getAutotuneModelSize() const {

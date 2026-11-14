@@ -40,7 +40,8 @@ class Dictionary {
   int32_t find(const std::string_view) const;
   int32_t find(const std::string_view, uint32_t h) const;
   void initTableDiscard();
-  void initNgrams();
+  void populateSubwords();
+  void resolveDraftSlots();
   void reset(std::istream&) const;
   void pushHash(std::vector<int32_t>&, int32_t) const;
   void addSubwords(std::vector<int32_t>&, const std::string_view, int32_t) const;
@@ -56,6 +57,7 @@ class Dictionary {
   int64_t ntokens_;
 
   int64_t pruneidx_size_;
+  int32_t probeStride_ = 1;
   std::unordered_map<int32_t, int32_t> pruneidx_;
   void addWordNgrams(
       std::vector<int32_t>& line,

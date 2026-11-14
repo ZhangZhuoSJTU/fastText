@@ -32,7 +32,13 @@ class Args {
   std::string boolToString(bool) const;
   std::string modelToString(model_name) const;
   std::string metricToString(metric_name) const;
+  bool tryParseBasicFlag(const std::vector<std::string>& args, int& ai);
+  bool tryParseDictionaryFlag(const std::vector<std::string>& args, int& ai);
+  bool tryParseTrainingFlag(const std::vector<std::string>& args, int& ai);
+  bool tryParseQuantizationFlag(const std::vector<std::string>& args, int& ai);
+  bool tryParseAutotuneFlag(const std::vector<std::string>& args, int& ai);
   std::unordered_set<std::string> manualArgs_;
+  bool draftLayout_;
 
  public:
   Args();
@@ -90,6 +96,11 @@ class Args {
   std::string getAutotuneMetricLabel() const;
   double getAutotuneMetricValue() const;
   int64_t getAutotuneModelSize() const;
+  int32_t ngramSlotSpan() const;
+  bool windowSpanMatches() const;
+  bool draftSlotsBound() const;
+  void enableDraftLayout();
+  bool isDraftLayout() const;
 
   static constexpr double kUnlimitedModelSize = -1.0;
 };

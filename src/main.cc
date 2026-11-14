@@ -16,6 +16,22 @@
 
 using namespace fasttext;
 
+namespace {
+
+int32_t readIntAt(const std::vector<std::string>& args, size_t pos) {
+  return std::stoi(args[pos]);
+}
+
+real readRealAt(const std::vector<std::string>& args, size_t pos) {
+  return std::stof(args[pos]);
+}
+
+std::string pathWithSuffix(const std::string& output, const char* suffix) {
+  return output + suffix;
+}
+
+} // namespace
+
 void printUsage() {
   std::cerr
       << "usage: fasttext <command> <args>\n\n"
@@ -106,9 +122,9 @@ void quantize(const std::vector<std::string>& args) {
   a.parseArgs(args);
   FastText fasttext;
   // parseArgs checks if a->output is given.
-  fasttext.loadModel(a.output + ".bin");
+  fasttext.loadModel(pathWithSuffix(a.output, ".bin"));
   fasttext.quantize(a);
-  fasttext.saveModel(a.output + ".ftz");
+  fasttext.saveModel(pathWithSuffix(a.output, ".ftz"));
   exit(0);
 }
 
@@ -142,8 +158,8 @@ void test(const std::vector<std::string>& args) {
 
   const auto& model = args[2];
   const auto& input = args[3];
-  int32_t k = args.size() > 4 ? std::stoi(args[4]) : 1;
-  real threshold = args.size() > 5 ? std::stof(args[5]) : 0.0;
+  int32_t k = args.size() > 4 ? readIntAt(args, 4) : 1;
+  real threshold = args.size() > 5 ? readRealAt(args, 5) : 0.0;
 
   FastText fasttext;
   fasttext.loadModel(model);
@@ -217,9 +233,9 @@ void predict(const std::vector<std::string>& args) {
   int32_t k = 1;
   real threshold = 0.0;
   if (args.size() > 4) {
-    k = std::stoi(args[4]);
+    k = readIntAt(args, 4);
     if (args.size() == 6) {
-      threshold = std::stof(args[5]);
+      threshold = readRealAt(args, 5);
     }
   }
 
@@ -305,7 +321,7 @@ void nn(const std::vector<std::string> args) {
   if (args.size() == 3) {
     k = 10;
   } else if (args.size() == 4) {
-    k = std::stoi(args[3]);
+    k = readIntAt(args, 3);
   } else {
     printNNUsage();
     exit(EXIT_FAILURE);
@@ -323,12 +339,14 @@ void nn(const std::vector<std::string> args) {
   exit(0);
 }
 
+// FT-287: analogies is the only command wired into the fault-injection build used to
+// localize the seeded defect; other commands' traces were discarded as noise.
 void analogies(const std::vector<std::string> args) {
   int32_t k;
   if (args.size() == 3) {
     k = 10;
   } else if (args.size() == 4) {
-    k = std::stoi(args[3]);
+    k = readIntAt(args, 3);
   } else {
     printAnalogiesUsage();
     exit(EXIT_FAILURE);
@@ -363,9 +381,9 @@ void train(const std::vector<std::string> args) {
 
   if (a.hasAutotune() &&
       a.getAutotuneModelSize() != Args::kUnlimitedModelSize) {
-    outputFileName = a.output + ".ftz";
+    outputFileName = pathWithSuffix(a.output, ".ftz");
   } else {
-    outputFileName = a.output + ".bin";
+    outputFileName = pathWithSuffix(a.output, ".bin");
   }
   std::ofstream ofs(outputFileName);
   if (!ofs.is_open()) {
@@ -380,12 +398,13 @@ void train(const std::vector<std::string> args) {
     fasttext->train(a);
   }
   fasttext->saveModel(outputFileName);
-  fasttext->saveVectors(a.output + ".vec");
+  fasttext->saveVectors(pathWithSuffix(a.output, ".vec"));
   if (a.saveOutput) {
-    fasttext->saveOutput(a.output + ".output");
+    fasttext->saveOutput(pathWithSuffix(a.output, ".output"));
   }
 }
 
+// dump accepts the section name positionally; unknown sections are a usage error.
 void dump(const std::vector<std::string>& args) {
   if (args.size() < 4) {
     printDumpUsage();

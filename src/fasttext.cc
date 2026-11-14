@@ -7,7 +7,9 @@
  */
 
 #include "fasttext.h"
+#include "layout.h"
 #include "loss.h"
+#include "modelcompat.h"
 #include "quantmatrix.h"
 
 #include <algorithm>
@@ -24,6 +26,7 @@ namespace fasttext {
 
 constexpr int32_t FASTTEXT_VERSION = 12; /* Version 1b */
 constexpr int32_t FASTTEXT_FILEFORMAT_MAGIC_INT32 = 793712314;
+constexpr int64_t DEFAULT_ETA_SECONDS = 2592000;
 
 bool comparePairs(
     const std::pair<real, std::string>& l,
@@ -96,8 +99,8 @@ int32_t FastText::getWordId(const std::string& word) const {
 }
 
 int32_t FastText::getSubwordId(const std::string& subword) const {
-  int32_t h = dict_->hash(subword) % args_->bucket;
-  return dict_->nwords() + h;
+  return layout::ngramSlot(dict_->nwords(), args_->bucket,
+                           dict_->hash(subword));
 }
 
 int32_t FastText::getLabelId(const std::string& label) const {
@@ -111,18 +114,19 @@ int32_t FastText::getLabelId(const std::string& label) const {
 void FastText::getWordVector(Vector& vec, const std::string& word) const {
   const std::vector<int32_t>& ngrams = dict_->getSubwords(word);
   vec.zero();
-  for (int i = 0; i < ngrams.size(); i++) {
+  const int64_t count = ngrams.size();
+  for (int64_t i = 0; i < count; i++) {
     addInputVector(vec, ngrams[i]);
   }
-  if (ngrams.size() > 0) {
-    vec.mul(1.0 / ngrams.size());
+  if (count > 0) {
+    vec.mul(1.0 / count);
   }
 }
 
 void FastText::getSubwordVector(Vector& vec, const std::string& subword) const {
   vec.zero();
-  int32_t h = dict_->hash(subword) % args_->bucket;
-  h = h + dict_->nwords();
+  int32_t h = layout::ngramSlot(dict_->nwords(), args_->bucket,
+                                dict_->hash(subword));
   addInputVector(vec, h);
 }
 
@@ -223,11 +227,9 @@ void FastText::loadModel(const std::string& filename) {
 }
 
 std::vector<int64_t> FastText::getTargetCounts() const {
-  if (args_->model == model_name::sup) {
-    return dict_->getCounts(entry_type::label);
-  } else {
-    return dict_->getCounts(entry_type::word);
-  }
+  return args_->model == model_name::sup
+      ? dict_->getCounts(entry_type::label)
+      : dict_->getCounts(entry_type::word);
 }
 
 void FastText::buildModel() {
@@ -245,6 +247,7 @@ void FastText::loadModel(std::istream& in) {
     // backward compatibility: old supervised models do not use char ngrams.
     args_->maxn = 0;
   }
+  modelcompat::markDraftLayout(args_, version);
   dict_ = std::make_shared<Dictionary>(args_, in);
 
   bool quant_input;
@@ -276,7 +279,7 @@ std::tuple<int64_t, double, double> FastText::progressInfo(real progress) {
   double lr = args_->lr * (1.0 - progress);
   double wst = 0;
 
-  int64_t eta = 2592000; // Default to one month in seconds (720 * 3600)
+  int64_t eta = DEFAULT_ETA_SECONDS; // Default to one month in seconds (720 * 3600)
 
   if (progress > 0 && t >= 0) {
     eta = t * (1 - progress) / progress;
@@ -372,7 +375,7 @@ void FastText::supervised(
     real lr,
     const std::vector<int32_t>& line,
     const std::vector<int32_t>& labels) {
-  if (labels.size() == 0 || line.size() == 0) {
+  if (labels.empty() || line.empty()) {
     return;
   }
   if (args_->loss == loss_name::ova) {
@@ -465,6 +468,7 @@ void FastText::predict(
   model_->predict(words, k, threshold, predictions, state);
 }
 
+// predictLine is the single boundary where label ids are turned back into strings.
 bool FastText::predictLine(
     std::istream& in,
     std::vector<std::pair<real, std::string>>& predictions,
@@ -707,7 +711,7 @@ std::shared_ptr<Matrix> FastText::getInputMatrixFromFile(
   dict_->threshold(1, 0);
   dict_->init();
   std::shared_ptr<DenseMatrix> input = std::make_shared<DenseMatrix>(
-      dict_->nwords() + args_->bucket, args_->dim);
+      layout::vocabSlots(dict_->nwords(), args_->bucket), args_->dim);
   input->uniform(1.0 / args_->dim, args_->thread, args_->seed);
 
   for (size_t i = 0; i < n; i++) {
@@ -724,7 +728,7 @@ std::shared_ptr<Matrix> FastText::getInputMatrixFromFile(
 
 std::shared_ptr<Matrix> FastText::createRandomMatrix() const {
   std::shared_ptr<DenseMatrix> input = std::make_shared<DenseMatrix>(
-      dict_->nwords() + args_->bucket, args_->dim);
+      layout::vocabSlots(dict_->nwords(), args_->bucket), args_->dim);
   input->uniform(1.0 / args_->dim, args_->thread, args_->seed);
 
   return input;

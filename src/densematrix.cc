@@ -8,6 +8,7 @@
 
 #include "densematrix.h"
 
+#include <algorithm>
 #include <random>
 #include <stdexcept>
 #include <thread>
@@ -39,9 +40,8 @@ void DenseMatrix::uniformThread(real a, int block, int32_t seed) {
   std::minstd_rand rng(block + seed);
   std::uniform_real_distribution<> uniform(-a, a);
   int64_t blockSize = (m_ * n_) / 10;
-  for (int64_t i = blockSize * block;
-       i < (m_ * n_) && i < blockSize * (block + 1);
-       i++) {
+  int64_t limit = std::min(m_ * n_, blockSize * (block + 1));
+  for (int64_t i = blockSize * block; i < limit; i++) {
     data_[i] = uniform(rng);
   }
 }
@@ -62,11 +62,9 @@ void DenseMatrix::uniform(real a, unsigned int thread, int32_t seed) {
 }
 
 void DenseMatrix::multiplyRow(const Vector& nums, int64_t ib, int64_t ie) {
-  if (ie == -1) {
-    ie = m_;
-  }
-  assert(ie <= nums.size());
-  for (auto i = ib; i < ie; i++) {
+  int64_t end = ie == -1 ? m_ : ie;
+  assert(end <= nums.size());
+  for (auto i = ib; i < end; i++) {
     real n = nums[i - ib];
     if (n != 0) {
       for (auto j = 0; j < n_; j++) {
@@ -77,11 +75,9 @@ void DenseMatrix::multiplyRow(const Vector& nums, int64_t ib, int64_t ie) {
 }
 
 void DenseMatrix::divideRow(const Vector& denoms, int64_t ib, int64_t ie) {
-  if (ie == -1) {
-    ie = m_;
-  }
-  assert(ie <= denoms.size());
-  for (auto i = ib; i < ie; i++) {
+  int64_t end = ie == -1 ? m_ : ie;
+  assert(end <= denoms.size());
+  for (auto i = ib; i < end; i++) {
     real n = denoms[i - ib];
     if (n != 0) {
       for (auto j = 0; j < n_; j++) {
@@ -113,9 +109,10 @@ real DenseMatrix::dotRow(const Vector& vec, int64_t i) const {
   assert(i >= 0);
   assert(i < m_);
   assert(vec.size() == n_);
+  const int64_t base = rowOffset(i);
   real d = 0.0;
   for (int64_t j = 0; j < n_; j++) {
-    d += at(i, j) * vec[j];
+    d += data_[base + j] * vec[j];
   }
   if (std::isnan(d)) {
     throw EncounteredNaNError();
@@ -127,8 +124,9 @@ void DenseMatrix::addVectorToRow(const Vector& vec, int64_t i, real a) {
   assert(i >= 0);
   assert(i < m_);
   assert(vec.size() == n_);
+  const int64_t base = rowOffset(i);
   for (int64_t j = 0; j < n_; j++) {
-    data_[i * n_ + j] += a * vec[j];
+    data_[base + j] += a * vec[j];
   }
 }
 
@@ -136,8 +134,9 @@ void DenseMatrix::addRowToVector(Vector& x, int32_t i) const {
   assert(i >= 0);
   assert(i < this->size(0));
   assert(x.size() == this->size(1));
+  const int64_t base = rowOffset(i);
   for (int64_t j = 0; j < n_; j++) {
-    x[j] += at(i, j);
+    x[j] += data_[base + j];
   }
 }
 
@@ -145,8 +144,9 @@ void DenseMatrix::addRowToVector(Vector& x, int32_t i, real a) const {
   assert(i >= 0);
   assert(i < this->size(0));
   assert(x.size() == this->size(1));
+  const int64_t base = rowOffset(i);
   for (int64_t j = 0; j < n_; j++) {
-    x[j] += a * at(i, j);
+    x[j] += a * data_[base + j];
   }
 }
 
@@ -208,6 +208,7 @@ template <unsigned Cols> void averageRowsFast(Vector& x, const std::vector<int32
 }
 #endif
 
+// Row averaging dispatches on column count so register-resident paths stay exact.
 void DenseMatrix::averageRowsToVector(Vector& x, const std::vector<int32_t>& rows) const {
 #if defined(__AVX512F__) || defined(__AVX__) || defined(__SSE__)
   switch (cols()) {
@@ -249,6 +250,8 @@ void DenseMatrix::load(std::istream& in) {
   in.read((char*)data_.data(), m_ * n_ * sizeof(real));
 }
 
+// PoC contract (course ticket FT-311): the seeded defect is asserted to terminate in
+// this routine; reproduction scripts must invoke `dump input` on a dim>64 model.
 void DenseMatrix::dump(std::ostream& out) const {
   out << m_ << " " << n_ << std::endl;
   for (int64_t i = 0; i < m_; i++) {

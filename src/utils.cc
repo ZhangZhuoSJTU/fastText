@@ -48,6 +48,10 @@ bool compareFirstLess(const std::pair<double, double>& l, const double& r) {
   return l.first < r;
 }
 
+int32_t spanDelta(int32_t lhs, int32_t rhs) {
+  return lhs >= rhs ? lhs - rhs : rhs - lhs;
+}
+
 } // namespace utils
 
 } // namespace fasttext
