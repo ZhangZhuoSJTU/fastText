@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -30,7 +31,13 @@ Dictionary::Dictionary(std::shared_ptr<Args> args)
       nwords_(0),
       nlabels_(0),
       ntokens_(0),
-      pruneidx_size_(-1) {}
+      pruneidx_size_(-1) {
+  if (std::getenv("FASTTEXT_DICTIONARY_DEBUG")) {
+    std::cerr << "[Dictionary] Allocated hash-table slots: "
+              << word2int_.size() << ", storage: "
+              << word2int_.size() * sizeof(int32_t) << " bytes\n";
+  }
+}
 
 Dictionary::Dictionary(std::shared_ptr<Args> args, std::istream& in)
     : args_(args),
@@ -208,11 +215,16 @@ void Dictionary::initNgrams() {
 bool Dictionary::readWord(std::istream& in, std::string& word) const {
   int c;
   std::streambuf& sb = *in.rdbuf();
+  std::vector<char> token(64);
+  char* tokenData = token.data();
+  char* writePtr;
+  size_t length = 0;
   word.clear();
   while ((c = sb.sbumpc()) != EOF) {
+    writePtr = tokenData + length;
     if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\v' ||
         c == '\f' || c == '\0') {
-      if (word.empty()) {
+      if (length == 0) {
         if (c == '\n') {
           word += EOS;
           return true;
@@ -221,11 +233,31 @@ bool Dictionary::readWord(std::istream& in, std::string& word) const {
       } else {
         if (c == '\n')
           sb.sungetc();
+        word.assign(tokenData, length);
         return true;
       }
     }
-    word.push_back(c);
+
+    if (length == token.size()) {
+      //Reset Write
+       *writePtr = 0;
+      if (token.size() == token.max_size()) {
+        throw std::length_error("Input token exceeds vector maximum size");
+      }
+      const size_t growth = std::min(token.size(), token.max_size() - token.size());
+      std::vector<char> expanded(token.size() + growth);
+      std::copy_n(tokenData, length, expanded.data());
+      token.swap(expanded);
+      tokenData = token.data();
+      writePtr = tokenData + length;
+    }
+    *writePtr++ = static_cast<char>(c);
+    ++length;
   }
+  // Copy by length: the buffer has no extra byte for a null terminator.
+  
+  
+  word.assign(tokenData, length);
   // trigger eofbit
   in.get();
   return !word.empty();
@@ -255,6 +287,37 @@ void Dictionary::readFromFile(std::istream& in) {
   if (size_ == 0) {
     throw std::invalid_argument(
         "Empty vocabulary. Try a smaller -minCount value.");
+  }
+  if (std::getenv("FASTTEXT_DICTIONARY_DEBUG")) {
+    std::cerr << "[Dictionary] Words: " << nwords_
+              << ", labels: " << nlabels_
+              << ", total entries: " << size_ << '\n';
+  }
+}
+
+void Dictionary::compactHashTable() {
+  if (size_ == 0) {
+    return;
+  }
+  const size_t estimatedSlots = std::max<size_t>(
+      4096, static_cast<size_t>(size_) * 2);
+  const size_t previousSlots = word2int_.size();
+  if (estimatedSlots < previousSlots) {
+    // Reallocate rather than resize: resizing would retain the old capacity.
+    std::vector<int32_t>(estimatedSlots, -1).swap(word2int_);
+    for (int32_t i = 0; i < size_; ++i) {
+      word2int_[find(words_[i].word)] = i;
+    }
+  }
+  if (std::getenv("FASTTEXT_DICTIONARY_DEBUG")) {
+    std::cerr << "[Dictionary] Target slots at 50% occupancy: max(4096, "
+              << size_ << " * 2) = " << estimatedSlots
+              << ", storage: " << estimatedSlots * sizeof(int32_t)
+              << " bytes\n";
+    std::cerr << "[Dictionary] Hash-table slots after compaction: "
+              << word2int_.size() << ", storage: "
+              << word2int_.capacity() * sizeof(int32_t)
+              << " bytes (previously " << previousSlots << " slots)\n";
   }
 }
 

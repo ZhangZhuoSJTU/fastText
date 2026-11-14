@@ -15,44 +15,75 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace fasttext {
 
-Args::Args() {
-  lr = 0.05;
-  dim = 100;
-  ws = 5;
-  epoch = 5;
-  minCount = 5;
-  minCountLabel = 0;
-  neg = 5;
-  wordNgrams = 1;
-  loss = loss_name::ns;
-  model = model_name::sg;
-  bucket = 2000000;
-  minn = 3;
-  maxn = 6;
-  thread = 12;
-  lrUpdateRate = 100;
-  t = 1e-4;
-  label = "__label__";
-  verbose = 2;
-  pretrainedVectors = "";
-  saveOutput = false;
-  seed = 0;
+namespace {
 
-  qout = false;
-  retrain = false;
-  qnorm = false;
-  cutoff = 0;
-  dsub = 2;
-
-  autotuneValidationFile = "";
-  autotuneMetric = "f1";
-  autotunePredictions = 1;
-  autotuneDuration = 60 * 5; // 5 minutes
-  autotuneModelSize = "";
+template <typename T, size_t N, typename Parse>
+bool assignOption(
+    Args& target,
+    const std::string& name,
+    const std::vector<std::string>& arguments,
+    size_t index,
+    const std::pair<const char*, T Args::*> (&options)[N],
+    Parse parse) {
+  for (const auto& option : options) {
+    if (name == option.first) {
+      target.*option.second = parse(arguments.at(index + 1));
+      return true;
+    }
+  }
+  return false;
 }
+
+template <typename T>
+void writeValue(std::ostream& out, const T& value) {
+  out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+template <typename T>
+void readValue(std::istream& in, T& value) {
+  in.read(reinterpret_cast<char*>(&value), sizeof(T));
+}
+
+template <typename T>
+void dumpValue(std::ostream& out, const char* name, const T& value) {
+  out << name << " " << value << std::endl;
+}
+
+} // namespace
+
+Args::Args()
+    : lr(0.05),
+      lrUpdateRate(100),
+      dim(100),
+      ws(5),
+      epoch(5),
+      minCount(5),
+      minCountLabel(0),
+      neg(5),
+      wordNgrams(1),
+      loss(loss_name::ns),
+      model(model_name::sg),
+      bucket(2000000),
+      minn(3),
+      maxn(6),
+      thread(12),
+      t(1e-4),
+      label("__label__"),
+      verbose(2),
+      saveOutput(false),
+      seed(0),
+      qout(false),
+      retrain(false),
+      qnorm(false),
+      cutoff(0),
+      dsub(2),
+      autotuneMetric("f1"),
+      autotunePredictions(1),
+      autotuneDuration(60 * 5) {}
 
 std::string Args::lossToString(loss_name ln) const {
   switch (ln) {
@@ -106,8 +137,7 @@ std::string Args::metricToString(metric_name mn) const {
   return "Unknown metric name!"; // should never happen
 }
 
-void Args::parseArgs(const std::vector<std::string>& args) {
-  const std::string& command(args[1]);
+void Args::setCommandDefaults(const std::string& command) {
   if (command == "supervised") {
     model = model_name::sup;
     loss = loss_name::softmax;
@@ -118,117 +148,120 @@ void Args::parseArgs(const std::vector<std::string>& args) {
   } else if (command == "cbow") {
     model = model_name::cbow;
   }
-  for (int ai = 2; ai < args.size(); ai += 2) {
-    if (args[ai][0] != '-') {
-      std::cerr << "Provided argument without a dash! Usage:" << std::endl;
-      printHelp();
-      exit(EXIT_FAILURE);
+}
+
+[[noreturn]] void Args::argumentError(const std::string& message) {
+  std::cerr << message << std::endl;
+  printHelp();
+  exit(EXIT_FAILURE);
+}
+
+void Args::parseLoss(const std::string& value) {
+  static const std::pair<const char*, loss_name> losses[] = {
+      {"hs", loss_name::hs},
+      {"ns", loss_name::ns},
+      {"softmax", loss_name::softmax},
+      {"one-vs-all", loss_name::ova},
+      {"ova", loss_name::ova},
+  };
+  for (const auto& entry : losses) {
+    if (value == entry.first) {
+      loss = entry.second;
+      return;
+    }
+  }
+  argumentError("Unknown loss: " + value);
+}
+
+bool Args::parseOption(const std::vector<std::string>& args, size_t index) {
+  const auto& name = args[index];
+  static const std::pair<const char*, int Args::*> integerOptions[] = {
+      {"-lrUpdateRate", &Args::lrUpdateRate},
+      {"-dim", &Args::dim},
+      {"-ws", &Args::ws},
+      {"-epoch", &Args::epoch},
+      {"-minCount", &Args::minCount},
+      {"-minCountLabel", &Args::minCountLabel},
+      {"-neg", &Args::neg},
+      {"-wordNgrams", &Args::wordNgrams},
+      {"-bucket", &Args::bucket},
+      {"-minn", &Args::minn},
+      {"-maxn", &Args::maxn},
+      {"-thread", &Args::thread},
+      {"-verbose", &Args::verbose},
+      {"-seed", &Args::seed},
+      {"-autotune-predictions", &Args::autotunePredictions},
+      {"-autotune-duration", &Args::autotuneDuration},
+  };
+  static const std::pair<const char*, double Args::*> realOptions[] = {
+      {"-lr", &Args::lr},
+      {"-t", &Args::t},
+  };
+  static const std::pair<const char*, size_t Args::*> sizeOptions[] = {
+      {"-cutoff", &Args::cutoff},
+      {"-dsub", &Args::dsub},
+  };
+  static const std::pair<const char*, std::string Args::*> stringOptions[] = {
+      {"-input", &Args::input},
+      {"-output", &Args::output},
+      {"-label", &Args::label},
+      {"-pretrainedVectors", &Args::pretrainedVectors},
+      {"-autotune-validation", &Args::autotuneValidationFile},
+      {"-autotune-modelsize", &Args::autotuneModelSize},
+  };
+  static const std::pair<const char*, bool Args::*> flags[] = {
+      {"-saveOutput", &Args::saveOutput},
+      {"-qnorm", &Args::qnorm},
+      {"-retrain", &Args::retrain},
+      {"-qout", &Args::qout},
+  };
+
+  for (const auto& flag : flags) {
+    if (name == flag.first) {
+      this->*flag.second = true;
+      return false; // Flags consume no value argument.
+    }
+  }
+  const auto parseInt = [](const std::string& value) { return std::stoi(value); };
+  const auto parseReal = [](const std::string& value) { return std::stof(value); };
+  const auto parseString = [](const std::string& value) { return value; };
+  if (assignOption(*this, name, args, index, integerOptions, parseInt) ||
+      assignOption(*this, name, args, index, realOptions, parseReal) ||
+      assignOption(*this, name, args, index, sizeOptions, parseInt) ||
+      assignOption(*this, name, args, index, stringOptions, parseString)) {
+    return true;
+  }
+  if (name == "-h") {
+    argumentError("Here is the help! Usage:");
+  }
+  if (name == "-loss") {
+    parseLoss(args.at(index + 1));
+  } else if (name == "-autotune-metric") {
+    autotuneMetric = args.at(index + 1);
+    getAutotuneMetric();
+    getAutotuneMetricLabel();
+  } else {
+    argumentError("Unknown argument: " + name);
+  }
+  return true;
+}
+
+void Args::parseArgs(const std::vector<std::string>& args) {
+  setCommandDefaults(args[1]);
+  for (size_t index = 2; index < args.size();) {
+    if (args[index][0] != '-') {
+      argumentError("Provided argument without a dash! Usage:");
     }
     try {
-      setManual(args[ai].substr(1));
-
-      if (args[ai] == "-h") {
-        std::cerr << "Here is the help! Usage:" << std::endl;
-        printHelp();
-        exit(EXIT_FAILURE);
-      } else if (args[ai] == "-input") {
-        input = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-output") {
-        output = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-lr") {
-        lr = std::stof(args.at(ai + 1));
-      } else if (args[ai] == "-lrUpdateRate") {
-        lrUpdateRate = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-dim") {
-        dim = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-ws") {
-        ws = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-epoch") {
-        epoch = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-minCount") {
-        minCount = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-minCountLabel") {
-        minCountLabel = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-neg") {
-        neg = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-wordNgrams") {
-        wordNgrams = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-loss") {
-        if (args.at(ai + 1) == "hs") {
-          loss = loss_name::hs;
-        } else if (args.at(ai + 1) == "ns") {
-          loss = loss_name::ns;
-        } else if (args.at(ai + 1) == "softmax") {
-          loss = loss_name::softmax;
-        } else if (
-            args.at(ai + 1) == "one-vs-all" || args.at(ai + 1) == "ova") {
-          loss = loss_name::ova;
-        } else {
-          std::cerr << "Unknown loss: " << args.at(ai + 1) << std::endl;
-          printHelp();
-          exit(EXIT_FAILURE);
-        }
-      } else if (args[ai] == "-bucket") {
-        bucket = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-minn") {
-        minn = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-maxn") {
-        maxn = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-thread") {
-        thread = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-t") {
-        t = std::stof(args.at(ai + 1));
-      } else if (args[ai] == "-label") {
-        label = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-verbose") {
-        verbose = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-pretrainedVectors") {
-        pretrainedVectors = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-saveOutput") {
-        saveOutput = true;
-        ai--;
-      } else if (args[ai] == "-seed") {
-        seed = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-qnorm") {
-        qnorm = true;
-        ai--;
-      } else if (args[ai] == "-retrain") {
-        retrain = true;
-        ai--;
-      } else if (args[ai] == "-qout") {
-        qout = true;
-        ai--;
-      } else if (args[ai] == "-cutoff") {
-        cutoff = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-dsub") {
-        dsub = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-validation") {
-        autotuneValidationFile = std::string(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-metric") {
-        autotuneMetric = std::string(args.at(ai + 1));
-        getAutotuneMetric(); // throws exception if not able to parse
-        getAutotuneMetricLabel(); // throws exception if not able to parse
-      } else if (args[ai] == "-autotune-predictions") {
-        autotunePredictions = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-duration") {
-        autotuneDuration = std::stoi(args.at(ai + 1));
-      } else if (args[ai] == "-autotune-modelsize") {
-        autotuneModelSize = std::string(args.at(ai + 1));
-      } else {
-        std::cerr << "Unknown argument: " << args[ai] << std::endl;
-        printHelp();
-        exit(EXIT_FAILURE);
-      }
-    } catch (std::out_of_range) {
-      std::cerr << args[ai] << " is missing an argument" << std::endl;
-      printHelp();
-      exit(EXIT_FAILURE);
+      setManual(args[index].substr(1));
+      const bool hasValue = parseOption(args, index);
+      index += hasValue ? 2 : 1;
+    } catch (const std::out_of_range&) {
+      argumentError(args[index] + " is missing an argument");
     }
   }
   if (input.empty() || output.empty()) {
-    std::cerr << "Empty input or output path." << std::endl;
-    printHelp();
-    exit(EXIT_FAILURE);
+    argumentError("Empty input or output path.");
   }
   if (wordNgrams <= 1 && maxn == 0 && !hasAutotune()) {
     bucket = 0;
@@ -324,64 +357,51 @@ void Args::printQuantizationHelp() {
 }
 
 void Args::save(std::ostream& out) {
-  out.write((char*)&(dim), sizeof(int));
-  out.write((char*)&(ws), sizeof(int));
-  out.write((char*)&(epoch), sizeof(int));
-  out.write((char*)&(minCount), sizeof(int));
-  out.write((char*)&(neg), sizeof(int));
-  out.write((char*)&(wordNgrams), sizeof(int));
-  out.write((char*)&(loss), sizeof(loss_name));
-  out.write((char*)&(model), sizeof(model_name));
-  out.write((char*)&(bucket), sizeof(int));
-  out.write((char*)&(minn), sizeof(int));
-  out.write((char*)&(maxn), sizeof(int));
-  out.write((char*)&(lrUpdateRate), sizeof(int));
-  out.write((char*)&(t), sizeof(double));
+  writeValue(out, dim);
+  writeValue(out, ws);
+  writeValue(out, epoch);
+  writeValue(out, minCount);
+  writeValue(out, neg);
+  writeValue(out, wordNgrams);
+  writeValue(out, loss);
+  writeValue(out, model);
+  writeValue(out, bucket);
+  writeValue(out, minn);
+  writeValue(out, maxn);
+  writeValue(out, lrUpdateRate);
+  writeValue(out, t);
 }
 
 void Args::load(std::istream& in) {
-  in.read((char*)&(dim), sizeof(int));
-  in.read((char*)&(ws), sizeof(int));
-  in.read((char*)&(epoch), sizeof(int));
-  in.read((char*)&(minCount), sizeof(int));
-  in.read((char*)&(neg), sizeof(int));
-  in.read((char*)&(wordNgrams), sizeof(int));
-  in.read((char*)&(loss), sizeof(loss_name));
-  in.read((char*)&(model), sizeof(model_name));
-  in.read((char*)&(bucket), sizeof(int));
-  in.read((char*)&(minn), sizeof(int));
-  in.read((char*)&(maxn), sizeof(int));
-  in.read((char*)&(lrUpdateRate), sizeof(int));
-  in.read((char*)&(t), sizeof(double));
+  readValue(in, dim);
+  readValue(in, ws);
+  readValue(in, epoch);
+  readValue(in, minCount);
+  readValue(in, neg);
+  readValue(in, wordNgrams);
+  readValue(in, loss);
+  readValue(in, model);
+  readValue(in, bucket);
+  readValue(in, minn);
+  readValue(in, maxn);
+  readValue(in, lrUpdateRate);
+  readValue(in, t);
 }
 
 void Args::dump(std::ostream& out) const {
-  out << "dim"
-      << " " << dim << std::endl;
-  out << "ws"
-      << " " << ws << std::endl;
-  out << "epoch"
-      << " " << epoch << std::endl;
-  out << "minCount"
-      << " " << minCount << std::endl;
-  out << "neg"
-      << " " << neg << std::endl;
-  out << "wordNgrams"
-      << " " << wordNgrams << std::endl;
-  out << "loss"
-      << " " << lossToString(loss) << std::endl;
-  out << "model"
-      << " " << modelToString(model) << std::endl;
-  out << "bucket"
-      << " " << bucket << std::endl;
-  out << "minn"
-      << " " << minn << std::endl;
-  out << "maxn"
-      << " " << maxn << std::endl;
-  out << "lrUpdateRate"
-      << " " << lrUpdateRate << std::endl;
-  out << "t"
-      << " " << t << std::endl;
+  dumpValue(out, "dim", dim);
+  dumpValue(out, "ws", ws);
+  dumpValue(out, "epoch", epoch);
+  dumpValue(out, "minCount", minCount);
+  dumpValue(out, "neg", neg);
+  dumpValue(out, "wordNgrams", wordNgrams);
+  dumpValue(out, "loss", lossToString(loss));
+  dumpValue(out, "model", modelToString(model));
+  dumpValue(out, "bucket", bucket);
+  dumpValue(out, "minn", minn);
+  dumpValue(out, "maxn", maxn);
+  dumpValue(out, "lrUpdateRate", lrUpdateRate);
+  dumpValue(out, "t", t);
 }
 
 bool Args::hasAutotune() const {

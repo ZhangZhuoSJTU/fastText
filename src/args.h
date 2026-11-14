@@ -29,6 +29,10 @@ enum class metric_name : int {
 
 class Args {
  protected:
+  void setCommandDefaults(const std::string& command);
+  [[noreturn]] void argumentError(const std::string& message);
+  void parseLoss(const std::string& value);
+  bool parseOption(const std::vector<std::string>& args, size_t index);
   std::string boolToString(bool) const;
   std::string modelToString(model_name) const;
   std::string metricToString(metric_name) const;
